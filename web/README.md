@@ -1,6 +1,3 @@
-# !!!Modify index.html.temp to index.html first!!!
-
-
 
 # React + TypeScript + Vite
 
