@@ -837,17 +837,25 @@ def rewriter_prompt(task: str, instruments: list[str]) -> str:
 
 def concertmaster_initial_prompt(refined_task: str, global_notes: str, performer: dict) -> str:
     """Initial prompt (English) - relies on AGENT.md for schema."""
+    performer_name = performer.get('name', '')
+    performer_task = performer.get('task', '')
+    performer_notes = performer.get('notes', '')
     return (
-        "YOU ARE THE CONCERTMASTER. OUTPUT ONLY YAML. DO NOT DO ANY WORK.\n"
-        "Your ONLY job is to give the first instruction to the performer.\n"
-        "DO NOT read files. DO NOT execute commands. DO NOT generate code.\n"
-        "The PERFORMER will do all the actual work.\n\n"
-        f"Task: {refined_task}\n"
-        f"Notes: {global_notes}\n"
-        f"Performer: {performer.get('name','')} - {performer.get('task','')}\n\n"
-        "Now output ONLY this YAML format:\n"
+        "YOU ARE THE CONCERTMASTER. OUTPUT ONLY YAML. DO NOT DO ANY WORK.\n\n"
+        "=== CRITICAL RULES ===\n"
+        f"1. This performer ({performer_name}) has ONE assigned task: \"{performer_task}\"\n"
+        "2. ONLY give instructions related to THIS assigned task\n"
+        "3. Do NOT order any work outside this scope\n"
+        "4. Mark 'done' when THIS specific task is complete\n"
+        "5. Do NOT read files, execute commands, or generate code yourself\n\n"
+        f"=== CONTEXT ===\n"
+        f"Overall goal: {refined_task}\n"
+        f"Guidelines: {global_notes}\n"
+        f"THIS performer's task: {performer_task}\n"
+        f"Notes: {performer_notes}\n\n"
+        "=== OUTPUT FORMAT ===\n"
         "action: reply\n"
-        "reply: \"Your brief instruction to performer\"\n"
+        "reply: \"Brief instruction for THIS performer's assigned task\"\n"
         "reason: \"Why\""
     )
 
@@ -860,19 +868,37 @@ def concertmaster_review_prompt(refined_task: str, global_notes: str, performer:
     max_output_len = 2000
     if len(output) > max_output_len:
         output = output[:max_output_len] + "\n...(truncated)"
+    performer_name = performer.get('name', '')
+    performer_task = performer.get('task', '')
+    performer_notes = performer.get('notes', '')
     return (
-        "YOU ARE THE CONCERTMASTER. OUTPUT ONLY YAML. DO NOT DO ANY WORK.\n"
-        "Review the performer's output and decide: done, reply, or needs_user_confirm.\n"
-        "If you choose needs_user_confirm, you MUST include a concise 'question' field describing what needs confirmation.\n"
-        "DO NOT read files. DO NOT execute commands. DO NOT generate code.\n\n"
-        f"Task: {refined_task}\n"
-        f"Performer: {performer.get('name','')}\n"
-        f"Output:\n{output}\n\n"
-        "YAML format (choose one):\n"
-        "For reply:   action: reply / reply: \"instruction\" / reason: \"why\"\n"
-        "For done:    action: done / reason: \"why complete\"\n"
-        "For confirm: action: needs_user_confirm / question: \"what to confirm\" / reason: \"why\"\n\n"
-        "IMPORTANT: If using needs_user_confirm, 'question' field is REQUIRED and must summarize what needs user decision."
+        "YOU ARE THE CONCERTMASTER. OUTPUT ONLY YAML. DO NOT DO ANY WORK.\n\n"
+        "=== CRITICAL RULES ===\n"
+        f"1. This performer ({performer_name}) has ONE assigned task: \"{performer_task}\"\n"
+        "2. Judge completion based ONLY on whether THIS task is done\n"
+        "3. Do NOT order additional work outside this scope\n"
+        "4. If the assigned task is complete, output 'action: done'\n"
+        "5. Do NOT continue with unrelated tasks\n\n"
+        f"=== THIS PERFORMER'S SCOPE ===\n"
+        f"Assigned task: {performer_task}\n"
+        f"Notes: {performer_notes}\n\n"
+        f"=== PERFORMER'S OUTPUT ===\n{output}\n\n"
+        "=== DECISION CRITERIA ===\n"
+        "- 'done': The assigned task above is COMPLETE (not the overall project)\n"
+        "- 'reply': Need more work ON THE ASSIGNED TASK ONLY\n"
+        "- 'needs_user_confirm': User decision needed (include 'question' field)\n\n"
+        "=== OUTPUT FORMAT (choose one) ===\n"
+        "action: done\n"
+        "reason: \"Assigned task complete: [brief summary]\"\n"
+        "---\n"
+        "action: reply\n"
+        "reply: \"Next step for assigned task\"\n"
+        "reason: \"Why needed\"\n"
+        "---\n"
+        "action: needs_user_confirm\n"
+        "question: \"What needs user decision\"\n"
+        "reason: \"Why\"\n"
+        "options: [\"Option A\", \"Option B\"]"
     )
 
 
