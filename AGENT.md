@@ -68,7 +68,7 @@ action: done
 reason: "Assigned task complete: [brief summary]"
 ```
 
-For `needs_user_confirm` action (MUST include question):
+For `needs_user_confirm` action (RARE - see restrictions below):
 ```
 action: needs_user_confirm
 question: "Clear description of what needs confirmation in English"
@@ -79,7 +79,21 @@ options: ["Option A", "Option B", "Option C"]
 ### Valid Actions
 - `action: reply` - Give next instruction for ASSIGNED TASK
 - `action: done` - ASSIGNED TASK is complete
-- `action: needs_user_confirm` - Need user decision (MUST include question field!)
+- `action: needs_user_confirm` - Need user decision WITHIN the assigned task scope
+
+### CRITICAL: When to use `needs_user_confirm`
+
+**ONLY use `needs_user_confirm` for decisions WITHIN the assigned task scope.**
+
+✅ ALLOWED - Questions about HOW to do the assigned task:
+- "Scan files" task → "Should I include hidden files?"
+- "Move files" task → "Target folder ~/Pictures doesn't exist. Create it?"
+
+❌ FORBIDDEN - Questions about DIFFERENT tasks (use `done` instead):
+- "Scan files" task → "How should I organize these files?" (that's a different task!)
+- "List files" task → "Should I move them to folders?" (NOT your task!)
+
+**If the performer completed the ASSIGNED task, output `action: done` - do NOT ask about next steps.**
 
 ### Example CORRECT Flow
 
@@ -98,17 +112,33 @@ action: done
 reason: "Assigned task complete: Found and listed 18 image files"
 ```
 
-### Example WRONG Flow (DO NOT DO THIS)
+### Example WRONG Flows (DO NOT DO THIS)
+
+**WRONG Example 1: Expanding scope with `reply`**
 
 Assigned task: "Scan home directory for image files"
 
-1. After performer lists files:
+After performer lists files:
 ```
 action: reply
 reply: "Now organize these files into folders"
 reason: "Next step"
 ```
 ❌ WRONG: Organizing is NOT part of "scan" task!
+
+**WRONG Example 2: Asking about OTHER tasks with `needs_user_confirm`**
+
+Assigned task: "Scan home directory for image files"
+
+After performer lists 18 files:
+```
+action: needs_user_confirm
+question: "How would you like to organize these 18 files?"
+reason: "Need user preference"
+options: ["By date", "By type", "By name"]
+```
+❌ WRONG: The scan task is COMPLETE. Organizing is a DIFFERENT task!
+✅ CORRECT: Output `action: done` with reason "Found 18 image files"
 
 ---
 

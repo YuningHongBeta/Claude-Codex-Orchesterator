@@ -21,6 +21,7 @@
     "cmd": [
       "claude",
       "-p",
+      "--strict-mcp-config",
       "--system-prompt",
       "CLAUDE.md",
       "{prompt}"
@@ -31,6 +32,7 @@
     "cmd": [
       "claude",
       "-p",
+      "--strict-mcp-config",
       "--tools",
       "",
       "--system-prompt",

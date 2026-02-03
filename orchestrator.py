@@ -835,32 +835,51 @@ def rewriter_prompt(task: str, instruments: list[str]) -> str:
     return f"タスク: {task}\n楽器: {inst_list}"
 
 
-def concertmaster_initial_prompt(refined_task: str, global_notes: str, performer: dict) -> str:
+def concertmaster_initial_prompt(
+    refined_task: str,
+    global_notes: str,
+    performer: dict,
+    shared_context: str = "",
+) -> str:
     """Initial prompt (English) - relies on AGENT.md for schema."""
     performer_name = performer.get('name', '')
     performer_task = performer.get('task', '')
     performer_notes = performer.get('notes', '')
-    return (
-        "YOU ARE THE CONCERTMASTER. OUTPUT ONLY YAML. DO NOT DO ANY WORK.\n\n"
-        "=== CRITICAL RULES ===\n"
-        f"1. This performer ({performer_name}) has ONE assigned task: \"{performer_task}\"\n"
-        "2. ONLY give instructions related to THIS assigned task\n"
-        "3. Do NOT order any work outside this scope\n"
-        "4. Mark 'done' when THIS specific task is complete\n"
-        "5. Do NOT read files, execute commands, or generate code yourself\n\n"
-        f"=== CONTEXT ===\n"
-        f"Overall goal: {refined_task}\n"
-        f"Guidelines: {global_notes}\n"
-        f"THIS performer's task: {performer_task}\n"
-        f"Notes: {performer_notes}\n\n"
-        "=== OUTPUT FORMAT ===\n"
-        "action: reply\n"
-        "reply: \"Brief instruction for THIS performer's assigned task\"\n"
-        "reason: \"Why\""
+    parts = [
+        "YOU ARE THE CONCERTMASTER. OUTPUT ONLY YAML. DO NOT DO ANY WORK.\n",
+        "USE ENGLISH ONLY. NEVER USE JAPANESE.\n\n",
+        "=== CRITICAL RULES ===\n",
+        f"1. This performer ({performer_name}) has ONE assigned task: \"{performer_task}\"\n",
+        "2. ONLY give instructions related to THIS assigned task\n",
+        "3. Do NOT order any work outside this scope\n",
+        "4. Mark 'done' when THIS specific task is complete\n",
+        "5. Do NOT read files, execute commands, or generate code yourself\n\n",
+        "=== CONTEXT ===\n",
+        f"Overall goal: {refined_task}\n",
+        f"Guidelines: {global_notes}\n",
+        f"THIS performer's task: {performer_task}\n",
+        f"Notes: {performer_notes}\n\n",
+    ]
+    if shared_context:
+        parts.append(f"Shared results:\n{shared_context}\n\n")
+    parts.extend(
+        [
+            "=== OUTPUT FORMAT (ENGLISH ONLY) ===\n",
+            "action: reply\n",
+            "reply: \"Brief instruction for THIS performer's assigned task in English\"\n",
+            "reason: \"Why\"",
+        ]
     )
+    return "".join(parts)
 
 
-def concertmaster_review_prompt(refined_task: str, global_notes: str, performer: dict, output: str) -> str:
+def concertmaster_review_prompt(
+    refined_task: str,
+    global_notes: str,
+    performer: dict,
+    output: str,
+    shared_context: str = "",
+) -> str:
     """Review prompt (English) - relies on AGENT.md for schema.
     Include a clear question when action is needs_user_confirm.
     """
@@ -871,35 +890,45 @@ def concertmaster_review_prompt(refined_task: str, global_notes: str, performer:
     performer_name = performer.get('name', '')
     performer_task = performer.get('task', '')
     performer_notes = performer.get('notes', '')
-    return (
-        "YOU ARE THE CONCERTMASTER. OUTPUT ONLY YAML. DO NOT DO ANY WORK.\n\n"
-        "=== CRITICAL RULES ===\n"
-        f"1. This performer ({performer_name}) has ONE assigned task: \"{performer_task}\"\n"
-        "2. Judge completion based ONLY on whether THIS task is done\n"
-        "3. Do NOT order additional work outside this scope\n"
-        "4. If the assigned task is complete, output 'action: done'\n"
-        "5. Do NOT continue with unrelated tasks\n\n"
-        f"=== THIS PERFORMER'S SCOPE ===\n"
-        f"Assigned task: {performer_task}\n"
-        f"Notes: {performer_notes}\n\n"
-        f"=== PERFORMER'S OUTPUT ===\n{output}\n\n"
-        "=== DECISION CRITERIA ===\n"
-        "- 'done': The assigned task above is COMPLETE (not the overall project)\n"
-        "- 'reply': Need more work ON THE ASSIGNED TASK ONLY\n"
-        "- 'needs_user_confirm': User decision needed (include 'question' field)\n\n"
-        "=== OUTPUT FORMAT (choose one) ===\n"
-        "action: done\n"
-        "reason: \"Assigned task complete: [brief summary]\"\n"
-        "---\n"
-        "action: reply\n"
-        "reply: \"Next step for assigned task\"\n"
-        "reason: \"Why needed\"\n"
-        "---\n"
-        "action: needs_user_confirm\n"
-        "question: \"What needs user decision\"\n"
-        "reason: \"Why\"\n"
-        "options: [\"Option A\", \"Option B\"]"
+    parts = [
+        "YOU ARE THE CONCERTMASTER. OUTPUT ONLY YAML. DO NOT DO ANY WORK.\n",
+        "USE ENGLISH ONLY. NEVER USE JAPANESE.\n\n",
+        "=== CRITICAL RULES ===\n",
+        f"1. This performer ({performer_name}) has ONE assigned task: \"{performer_task}\"\n",
+        "2. Judge completion based ONLY on whether THIS task is done\n",
+        "3. Do NOT order additional work outside this scope\n",
+        "4. If the assigned task is complete, output 'action: done' IMMEDIATELY\n",
+        "5. Do NOT ask about next steps or other tasks - just mark done\n\n",
+        "=== THIS PERFORMER'S SCOPE ===\n",
+        f"Assigned task: {performer_task}\n",
+        f"Notes: {performer_notes}\n\n",
+    ]
+    if shared_context:
+        parts.append(f"Shared results:\n{shared_context}\n\n")
+    parts.extend(
+        [
+            f"=== PERFORMER'S OUTPUT ===\n{output}\n\n",
+            "=== DECISION CRITERIA ===\n",
+            "- 'done': The assigned task above is COMPLETE → USE THIS if task finished\n",
+            "- 'reply': Need more work ON THE ASSIGNED TASK ONLY (not other tasks!)\n",
+            "- 'needs_user_confirm': ONLY for decisions WITHIN this task's scope\n",
+            "  ❌ WRONG: Asking 'how to organize files' when task is 'scan files'\n",
+            "  ✅ RIGHT: Asking 'include hidden files?' when task is 'scan files'\n\n",
+            "=== OUTPUT FORMAT (choose one, ENGLISH ONLY) ===\n",
+            "action: done\n",
+            "reason: \"Assigned task complete: [brief summary in English]\"\n",
+            "---\n",
+            "action: reply\n",
+            "reply: \"Next step for assigned task in English\"\n",
+            "reason: \"Why needed\"\n",
+            "---\n",
+            "action: needs_user_confirm\n",
+            "question: \"Question about THIS task only, in English\"\n",
+            "reason: \"Why\"\n",
+            "options: [\"Option A\", \"Option B\"]",
+        ]
     )
+    return "".join(parts)
 
 
 def performer_prompt(
@@ -980,10 +1009,16 @@ def get_last_message(data: dict, role: str) -> str | None:
     return None
 
 
-def build_performer_prompt(data: dict, performer: dict) -> str:
+def build_performer_prompt(
+    data: dict,
+    performer: dict,
+    shared_results: list[dict] | None = None,
+    action_log_path: Path | None = None,
+) -> str:
     """Build performer prompt with conversation context."""
     history = data.get("history") or []
     task = performer.get("task", "")
+    performer_id = performer.get("id", "")
 
     last_output = ""
     for item in reversed(history):
@@ -997,10 +1032,59 @@ def build_performer_prompt(data: dict, performer: dict) -> str:
             last_instruction = item.get("content", "") or ""
             break
 
+    action_log_block = ""
+    if (
+        action_log_path
+        and not task_is_summary(task)
+        and (
+            instruction_requires_action_log(task)
+            or instruction_requires_action_log(last_instruction)
+        )
+    ):
+        action_log_block = action_log_instruction(action_log_path)
+
+    summary_block = ""
+    if action_log_path and task_is_summary(task):
+        summary_block = (
+            f"Use action log at {action_log_path} to build the report.\n"
+            "Do not rescan the filesystem; if the log is empty or missing entries, say so.\n"
+        )
+
+    shared_block = ""
+    if shared_results:
+        lines: list[str] = []
+        for item in shared_results:
+            if not isinstance(item, dict):
+                continue
+            if performer_id and item.get("id") == performer_id:
+                continue
+            instrument = item.get("instrument") or "Instrument"
+            item_task = item.get("task") or ""
+            output = item.get("output") or ""
+            output = output.strip()
+            if len(output) > 800:
+                output = output[:800] + "\n...(truncated)"
+            lines.append(f"[{instrument}] {item_task}\n{output}")
+        if lines:
+            shared_block = "Shared results from other tasks:\n" + "\n\n".join(lines)
+
     if not last_instruction:
-        return task
+        parts = [f"Task: {task}"]
+        if action_log_block:
+            parts.append(action_log_block)
+        if summary_block:
+            parts.append(summary_block)
+        if shared_block:
+            parts.append(shared_block)
+        return "\n\n".join(parts).strip()
 
     parts = [f"Task: {task}"]
+    if action_log_block:
+        parts.append(action_log_block)
+    if summary_block:
+        parts.append(summary_block)
+    if shared_block:
+        parts.append(shared_block)
     if last_output:
         parts.append(f"Your previous output:\n{last_output}")
     parts.append(f"New instruction: {last_instruction}")
@@ -1013,6 +1097,36 @@ def read_exchange(path: Path) -> dict:
     if not data:
         return {}
     return data
+
+
+def read_shared_results(path: Path) -> list[dict]:
+    data = read_yaml(path)
+    if not data:
+        return []
+    results = data.get("results") if isinstance(data, dict) else None
+    if not isinstance(results, list):
+        return []
+    return [item for item in results if isinstance(item, dict)]
+
+
+def format_shared_results(shared_results: list[dict], exclude_id: str = "") -> str:
+    if not shared_results:
+        return ""
+    lines: list[str] = []
+    for item in shared_results:
+        if not isinstance(item, dict):
+            continue
+        if exclude_id and item.get("id") == exclude_id:
+            continue
+        instrument = item.get("instrument") or "Instrument"
+        item_task = item.get("task") or ""
+        output = (item.get("output") or "").strip()
+        if len(output) > 800:
+            output = output[:800] + "\n...(truncated)"
+        lines.append(f"[{instrument}] {item_task}\n{output}")
+    if not lines:
+        return ""
+    return "Shared results from other tasks:\n" + "\n\n".join(lines)
 
 
 def update_exchange(path: Path, lock: threading.Lock, update_fn) -> dict:
@@ -1132,6 +1246,134 @@ def build_reply_from_pending(pending: dict) -> str:
     return "ユーザー回答: NG。修正案を提示してください。"
 
 
+def pending_is_approved(pending: dict) -> bool:
+    if pending.get("user_approved") is True:
+        return True
+    decision = pending.get("user_reply") or pending.get("user_choice") or ""
+    normalized = str(decision).strip().lower()
+    return normalized in ("ok", "yes", "y", "true", "1", "承認", "はい")
+
+
+def instruction_requires_user_confirm(text: str) -> bool:
+    if not text:
+        return False
+    t = text.lower()
+    destructive_markers = (
+        "mv ",
+        " rm ",
+        "rm -",
+        "mkdir",
+        "rmdir",
+        "cp ",
+        "chmod",
+        "chown",
+        "delete",
+        "remove",
+        "move ",
+        "rename",
+        "overwrite",
+        "organize",
+        "reorganize",
+        "relocate",
+        "clean up",
+        "purge",
+        "trash",
+        "create folders",
+        "create directories",
+        "create files",
+        "write files",
+        "edit files",
+        "modify files",
+        "replace files",
+        "移動",
+        "削除",
+        "作成",
+        "整理",
+        "分類",
+        "上書き",
+    )
+    if not any(marker in t for marker in destructive_markers):
+        return False
+    file_markers = ("/", "~/", "\\", ".png", ".jpg", ".jpeg", ".gif", ".webp", ".heic", ".bmp", ".svg")
+    context_markers = ("file", "files", "folder", "folders", "directory", "directories", "path", "画像", "ファイル", "フォルダ")
+    return any(marker in t for marker in file_markers) or any(marker in t for marker in context_markers)
+
+
+def instruction_requires_action_log(text: str) -> bool:
+    if not text:
+        return False
+    t = text.lower()
+    action_markers = (
+        "mv ",
+        " rm ",
+        "rm -",
+        "mkdir",
+        "rmdir",
+        "cp ",
+        "chmod",
+        "chown",
+        "delete",
+        "remove",
+        "move ",
+        "rename",
+        "overwrite",
+        "create folders",
+        "create directories",
+        "create files",
+        "write files",
+        "edit files",
+        "modify files",
+        "replace files",
+        "organize",
+        "reorganize",
+        "relocate",
+        "clean up",
+        "purge",
+        "trash",
+        "移動",
+        "削除",
+        "作成",
+        "整理",
+        "分類",
+        "上書き",
+    )
+    return any(marker in t for marker in action_markers)
+
+
+def task_is_summary(task: str) -> bool:
+    if not task:
+        return False
+    t = task.lower()
+    return any(
+        key in t
+        for key in (
+            "summary",
+            "report",
+            "recap",
+            "changes made",
+            "changelog",
+            "結果",
+            "まとめ",
+            "サマリー",
+            "レポート",
+            "変更",
+        )
+    )
+
+
+def action_log_instruction(action_log_path: Path) -> str:
+    path = str(action_log_path)
+    return (
+        "Action logging required for file changes:\n"
+        f"- Append one JSON line per action to: {path}\n"
+        "- Use this format (one line each):\n"
+        '  {"action":"mkdir","path":"/path/to/dir"}\n'
+        '  {"action":"move","src":"/path/src","dst":"/path/dst"}\n'
+        '  {"action":"delete","path":"/path/file"}\n'
+        "- Use >> to append; do not overwrite the log.\n"
+    )
+
+
 def concertmaster_worker(
     exchange_path: Path,
     performer: dict,
@@ -1160,6 +1402,29 @@ def concertmaster_worker(
             if status == "waiting_for_user":
                 pending = data.get("pending") or {}
                 if pending.get("user_reply") or pending.get("user_choice") or pending.get("user_approved"):
+                    blocked_reply = (pending.get("blocked_reply") or "").strip()
+                    if blocked_reply:
+                        if pending_is_approved(pending):
+                            def apply_user(d: dict) -> dict:
+                                append_exchange_message(d, "concertmaster", blocked_reply, "prompt")
+                                d["status"] = "waiting_for_performer"
+                                d["pending"] = {}
+                                d["turn"] = d.get("turn", 0) + 1
+                                return d
+                        else:
+                            def apply_user(d: dict) -> dict:
+                                append_exchange_message(
+                                    d,
+                                    "performer",
+                                    "User declined to execute file changes. Propose a safer alternative or ask for clarification.",
+                                    "response",
+                                )
+                                d["status"] = "waiting_for_concertmaster"
+                                d["pending"] = {}
+                                return d
+                        update_exchange(exchange_path, lock, apply_user)
+                        continue
+
                     reply = build_reply_from_pending(pending)
 
                     def apply_user(d: dict) -> dict:
@@ -1179,7 +1444,11 @@ def concertmaster_worker(
                 continue
 
             if turn >= max_turns:
+                if verbose:
+                    print(f"[Concertmaster] Max turns ({max_turns}) reached for {performer.get('name', '')}. Force completing.", file=sys.stderr)
+
                 def force_done(d: dict) -> dict:
+                    append_exchange_message(d, "concertmaster", f"Max turns ({max_turns}) reached. Task auto-completed.", "review")
                     d["status"] = "done"
                     return d
 
@@ -1187,10 +1456,25 @@ def concertmaster_worker(
                 break
 
             performer_output = get_last_message(data, "performer")
+            shared_context = format_shared_results(
+                read_shared_results(run_dir / "shared_results.yaml"),
+                performer.get("id", ""),
+            )
             if performer_output:
-                prompt = concertmaster_review_prompt(refined_task, global_notes, performer, performer_output)
+                prompt = concertmaster_review_prompt(
+                    refined_task,
+                    global_notes,
+                    performer,
+                    performer_output,
+                    shared_context,
+                )
             else:
-                prompt = concertmaster_initial_prompt(refined_task, global_notes, performer)
+                prompt = concertmaster_initial_prompt(
+                    refined_task,
+                    global_notes,
+                    performer,
+                    shared_context,
+                )
 
             result = run_external(
                 concertmaster_cmd,
@@ -1216,6 +1500,33 @@ def concertmaster_worker(
 
                 update_exchange(exchange_path, lock, apply_done)
                 break
+            if action == "reply" and reply and instruction_requires_user_confirm(reply):
+                def apply_user_wait(d: dict) -> dict:
+                    append_exchange_message(
+                        d,
+                        "concertmaster",
+                        "Safety check: awaiting user approval before executing file changes.",
+                        "review",
+                    )
+                    d["status"] = "waiting_for_user"
+                    d["pending"] = {
+                        "type": "ok_ng",
+                        "question": f"次の指示はファイル変更を伴います。実行してよいですか？\n{reply}",
+                        "reason": "ファイル変更前の安全確認です。",
+                        "options": [],
+                        "ok_reply": "",
+                        "ng_reply": "",
+                        "choice_reply_template": "",
+                        "user_reply": "",
+                        "user_choice": "",
+                        "user_approved": False,
+                        "blocked_reply": reply,
+                    }
+                    return d
+
+                update_exchange(exchange_path, lock, apply_user_wait)
+                turn += 1
+                continue
             if action == "needs_user_confirm":
                 confirm = normalize_confirm_payload(action_data)
 
@@ -1237,6 +1548,7 @@ def concertmaster_worker(
                     return d
 
                 update_exchange(exchange_path, lock, apply_user_wait)
+                turn += 1  # Count user confirmations toward max_turns
                 continue
 
             if not reply:
@@ -1280,7 +1592,13 @@ def performer_worker(
                 watcher.wait(1.5)
                 continue
 
-            prompt = build_performer_prompt(data, performer)
+            shared_results = read_shared_results(run_dir / "shared_results.yaml")
+            prompt = build_performer_prompt(
+                data,
+                performer,
+                shared_results,
+                run_dir / "action_log.jsonl",
+            )
             result = run_external(
                 performer_cmd,
                 prompt,
@@ -1553,6 +1871,30 @@ def run(
             for idx, inst in enumerate(assignments)
         ]
         done_ids: set[str] = set()
+        shared_results_path = run_dir / "shared_results.yaml"
+        shared_results: dict = {"results": []}
+        write_yaml(shared_results_path, shared_results)
+        action_log_path = run_dir / "action_log.jsonl"
+        if not action_log_path.exists():
+            action_log_path.write_text("", encoding="utf-8")
+        recorded_done_ids: set[str] = set()
+
+        def record_shared_result(state: dict, data: dict) -> None:
+            task_id = state.get("id") or ""
+            if not task_id or task_id in recorded_done_ids:
+                return
+            idx = state["index"]
+            inst = assignments[idx]
+            output = get_last_message(data, "performer") or ""
+            entry = {
+                "id": task_id,
+                "instrument": inst.get("name") or f"Instrument-{idx + 1}",
+                "task": inst.get("task") or "",
+                "output": output,
+            }
+            shared_results["results"].append(entry)
+            write_yaml(shared_results_path, shared_results)
+            recorded_done_ids.add(task_id)
 
         def deps_done(state: dict) -> bool:
             deps = state.get("deps") or []
@@ -1629,6 +1971,7 @@ def run(
                     if data.get("status") == "done":
                         state["status"] = "done"
                         done_ids.add(state["id"])
+                        record_shared_result(state, data)
                     elif data.get("status") == "error":
                         state["status"] = "error"
                 if state["status"] == "done":
@@ -1651,14 +1994,16 @@ def run(
             if done_count >= len(assignments):
                 break
 
-            pending_count = sum(1 for state in task_states if state["status"] == "pending")
+            pending_states = [state for state in task_states if state["status"] == "pending"]
+            pending_count = len(pending_states)
             if running_count == 0 and pending_count == 0:
                 break
             if running_count == 0 and pending_count > 0:
-                # Deadlock: pending tasks exist but none are ready
-                if verbose:
-                    print("警告: 依存関係の循環により実行できないタスクがあります。", file=sys.stderr)
-                break
+                # Deadlock only if no pending task is now runnable.
+                if not any(deps_done(state) for state in pending_states):
+                    if verbose:
+                        print("警告: 依存関係の循環により実行できないタスクがあります。", file=sys.stderr)
+                    break
 
             time.sleep(1.5)
 
