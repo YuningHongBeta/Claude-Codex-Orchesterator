@@ -1042,12 +1042,12 @@ def normalize_confirm_payload(action_data: dict) -> dict:
         if extracted:
             options = extracted
     
-    # confirm_type を決定: 明示的に指定されていない場合、optionsがあればchoice、なければok_ng
-    if confirm_type not in ("ok_ng", "choice", "free_text"):
-        if options:
-            confirm_type = "choice"
-        else:
-            confirm_type = "ok_ng"
+    # confirm_type を決定: optionsがあれば必ずchoice、なければok_ng
+    # (明示的にok_ngが指定されていてもoptionsがあればchoiceに変更)
+    if options:
+        confirm_type = "choice"
+    elif confirm_type not in ("ok_ng", "choice", "free_text"):
+        confirm_type = "ok_ng"
     
     ok_reply = confirm.get("ok_reply") or action_data.get("ok_reply") or action_data.get("reply") or ""
     ng_reply = confirm.get("ng_reply") or action_data.get("ng_reply") or ""

@@ -557,17 +557,17 @@ def normalize_pending_for_api(pending: dict) -> dict:
     pending = dict(pending)  # コピーを作成
     options = pending.get("options") or []
     question = pending.get("question") or ""
-    pending_type = (pending.get("type") or "ok_ng").strip().lower()
-    
     # optionsが空で、質問文に選択肢が含まれている場合は自動検出
     if not options and question:
         extracted = extract_choices_from_question(question)
         if extracted:
             pending["options"] = extracted
-            # タイプも choice に変更
-            if pending_type not in ("choice", "free_text"):
-                pending["type"] = "choice"
-    
+            options = extracted
+
+    # optionsがあれば必ずchoice型に変更（ok_ngが指定されていても）
+    if options:
+        pending["type"] = "choice"
+
     return pending
 
 
