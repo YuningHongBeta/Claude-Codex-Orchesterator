@@ -1,7 +1,86 @@
 # Claude Code × Codex オーケストレーター
 
-Claude Code を指揮者/コンサートマスター、Codex を演奏者として協調させるCLIです。  
+Claude Code を指揮者/コンサートマスター、Codex を演奏者として協調させるCLIです。
 出力は日本語を前提に設計しています。
+
+---
+
+## クイックスタート（初回セットアップ）
+
+### 1. 前提条件
+
+以下のツールがインストールされている必要があります：
+
+| ツール | インストール方法 |
+|--------|------------------|
+| Python 3.8+ | https://www.python.org/ |
+| Node.js 18+ | https://nodejs.org/ |
+| Claude Code CLI | `npm install -g @anthropic-ai/claude-code` |
+| Codex CLI | `npm install -g @openai/codex` |
+
+### 2. リポジトリのクローンと依存関係のインストール
+
+```bash
+# クローン
+git clone https://github.com/YOUR_USERNAME/claude-codex-orchestrator.git
+cd claude-codex-orchestrator
+
+# Python依存関係
+pip install pyyaml watchdog
+
+# Web UI依存関係
+cd web
+npm install
+cd ..
+```
+
+### 3. 設定ファイルの編集
+
+#### 3.1 Web UI の認証設定（必須）
+
+`web/index.html` を編集して、ログイン情報を設定してください：
+
+```html
+<script>
+  window.ORCHESTRATOR_API_BASE = "http://localhost:8088";
+  window.ORCHESTRATOR_LOGIN_ENABLED = true;
+  window.ORCHESTRATOR_LOGIN_USER = "your_username";  // ← 変更
+  window.ORCHESTRATOR_LOGIN_PASS = "your_password";  // ← 変更
+</script>
+```
+
+> **推奨**: パスワードは SHA-256 ハッシュで設定してください（後述）
+
+#### 3.2 デプロイスクリプトの設定（外部公開する場合）
+
+`deploy-to-lambda.sh` と `update-api-url.sh` を編集して、サーバー情報を設定：
+
+```bash
+REMOTE_HOST="Lambda"  # SSHホスト名（~/.ssh/config で設定）
+REMOTE_PATH="public_html/orchestrator"  # リモートパス
+```
+
+### 4. 動作確認
+
+#### CLI のみで使う場合
+
+```bash
+python3 orchestrator.py --task "Hello World を出力するスクリプトを作成"
+```
+
+#### Web UI を使う場合
+
+```bash
+# ターミナル1: バックエンドAPI起動
+./start-backend.sh 8088
+
+# ターミナル2: フロントエンド開発サーバー起動
+cd web && npm run dev
+```
+
+ブラウザで http://localhost:5173 を開いてください。
+
+---
 
 ## 使い方
 
