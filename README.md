@@ -53,7 +53,7 @@ cd ..
 
 #### 3.2 デプロイスクリプトの設定（外部公開する場合）
 
-`deploy-to-lambda.sh` と `update-api-url.sh` を編集して、サーバー情報を設定：
+`ctl.sh` を編集して、サーバー情報を設定：
 
 ```bash
 REMOTE_HOST="Lambda"  # SSHホスト名（~/.ssh/config で設定）
@@ -68,17 +68,30 @@ REMOTE_PATH="public_html/orchestrator"  # リモートパス
 python3 orchestrator.py --task "Hello World を出力するスクリプトを作成"
 ```
 
-#### Web UI を使う場合
+#### Web UI を使う場合（ローカル開発）
 
 ```bash
 # ターミナル1: バックエンドAPI起動
-./start-backend.sh 8088
+./ctl.sh backend
 
 # ターミナル2: フロントエンド開発サーバー起動
-cd web && npm run dev
+./ctl.sh dev
 ```
 
 ブラウザで http://localhost:5173 を開いてください。
+
+#### Web UI を使う場合（外部公開）
+
+```bash
+# バックエンド + トンネルを一括起動（バックグラウンド）
+./ctl.sh start
+
+# 状態確認
+./ctl.sh status
+
+# 停止
+./ctl.sh stop
+```
 
 ---
 
@@ -171,60 +184,75 @@ Web UI からも返信できます（「指揮者 / コンマス」セクショ�
 
 ## 構成
 
+- `ctl.sh` 統合管理スクリプト（後述）
 - `orchestrator.py` CLI本体
 - `web_server.py` API + ジョブ実行サーバ
 - `web/` React + Vite フロントエンド
 - `runs/` 実行ログ/結果
-- `start-backend.sh` APIサーバ起動
-- `start-tunnel.sh` Cloudflare Tunnelで外部公開
-- `deploy-to-lambda.sh` フロントエンド配備
-- `update-api-url.sh` 配備済みUIのAPI URL更新
+- `logs/` サービスログ・トンネルURL
+
+## ctl.sh コマンド一覧
+
+```
+./ctl.sh <command> [options]
+
+  start [port]      バックエンド + トンネルを一括起動
+  stop              全サービス停止
+  status            サービス状態確認
+
+  backend [port]    バックエンドのみ起動
+  tunnel [port]     トンネルのみ起動
+  update-url [url]  フロントエンドのAPI URL更新
+
+  dev               フロントエンド開発サーバー起動
+  build             フロントエンドビルド
+  deploy            リモートサーバーへデプロイ
+
+  logs [service]    ログ表示 (backend|tunnel|all)
+  help              ヘルプ表示
+```
 
 ## Web UI (React/Vite)
 
-進捗確認とジョブ投入用のUIです。開発時はViteを使用します。
+進捗確認とジョブ投入用のUIです。
+
+### ローカル開発
 
 ```bash
-cd /Users/xxx/claude-codex-orchestrator/web
-npm install
-npm run dev
+# ターミナル1: バックエンド
+./ctl.sh backend
+
+# ターミナル2: フロントエンド開発サーバー
+./ctl.sh dev
 ```
 
-Viteの表示に従って `http://localhost:5173` を開いてください。
-APIは別プロセスで起動し、CORSを許可します。
+http://localhost:5173 を開いてください。
 
-```bash
-cd /Users/xxx/claude-codex-orchestrator
-./start-backend.sh 8088
-```
-
-フロントのAPI先は `web/index.html` の `window.ORCHESTRATOR_API_BASE` で設定します。
-
-```html
-<script>
-  window.ORCHESTRATOR_API_BASE = "http://localhost:8088";
-  // window.ORCHESTRATOR_API_TOKEN = "";
-</script>
-```
-
-## 外部公開（トンネル + 静的配備）
+### 外部公開（トンネル + 静的配備）
 
 APIはローカルで動かし、Cloudflare TunnelでHTTPS公開します。
 
 ```bash
-./start-tunnel.sh 8088
+# バックエンド + トンネル一括起動
+./ctl.sh start
+
+# 状態確認
+./ctl.sh status
+
+# 停止
+./ctl.sh stop
 ```
 
-トンネルのURLは起動ログに表示されます。
-UI反映は `update-api-url.sh` で行います。
+トンネルURLは自動的に `logs/tunnel.url` に保存され、フロントエンドに反映されます。
 
-`web` の静的ビルドは以下で作成し、`deploy-to-lambda.sh` で配備します。
+### リモートサーバーへのデプロイ
 
 ```bash
-cd /Users/xxx/claude-codex-orchestrator/web
-npm run build
-cd /Users/xxx/claude-codex-orchestrator
-./deploy-to-lambda.sh
+# ビルド
+./ctl.sh build
+
+# デプロイ
+./ctl.sh deploy
 ```
 
 ## セキュリティ
