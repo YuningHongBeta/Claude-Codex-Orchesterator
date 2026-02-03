@@ -1,0 +1,24 @@
+__pycache__/
+runs/
+logs/
+
+# Sensitive files - NEVER commit these
+.env
+.env.*
+*.local.json
+
+# Temp/backup files
+*~
+*.bak
+*.swp
+*.swo
+
+# Large data files
+image_inventory.csv
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Node
+node_modules/

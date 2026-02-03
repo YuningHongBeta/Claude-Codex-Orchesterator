@@ -1,0 +1,58 @@
+{
+  "language": "ja",
+  "instrument_pool": [
+    "ヴァイオリン",
+    "ビオラ",
+    "チェロ",
+    "フルート"
+  ],
+  "permissions": {
+    "claude": {
+      "mode": "bypassPermissions",
+      "add_dirs": []
+    },
+    "codex": {
+      "sandbox": "danger-full-access",
+      "approval": "never",
+      "add_dirs": []
+    }
+  },
+  "rewriter": {
+    "cmd": [
+      "claude",
+      "-p",
+      "--system-prompt",
+      "CLAUDE.md",
+      "{prompt}"
+    ],
+    "timeout_sec": 600
+  },
+  "concertmaster": {
+    "cmd": [
+      "claude",
+      "-p",
+      "--tools",
+      "",
+      "--system-prompt",
+      "AGENT.md",
+      "{prompt}"
+    ],
+    "timeout_sec": 600
+  },
+  "performer": {
+    "cmd": [
+      "codex",
+      "exec",
+      "--skip-git-repo-check"
+    ],
+    "timeout_sec": 600
+  },
+  "max_turns_performer": 3,
+  "mix_with_conductor": true,
+  "token_management": {
+    "max_tokens": 200000,
+    "warning_threshold": 0.75,
+    "compact_threshold": 0.85,
+    "max_compact_attempts": 3
+  }
+}
