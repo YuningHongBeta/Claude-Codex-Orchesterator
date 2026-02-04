@@ -12,12 +12,14 @@
     <!-- Configure API endpoint for production -->
     <script>
       // API endpoint: Set by update-api-url.sh when tunnel starts
-      window.ORCHESTRATOR_API_BASE = "https://assured-geneva-opposed-tree.trycloudflare.com";
+      // For local dev with Vite proxy, use empty string
+      // For production/tunnel, this will be set to the tunnel URL
+      window.ORCHESTRATOR_API_BASE = "";
       // window.ORCHESTRATOR_API_TOKEN = "";
       // Login gate (client-side)
-      window.ORCHESTRATOR_LOGIN_ENABLED = true;
-      window.ORCHESTRATOR_LOGIN_USER = "your_username";
-      window.ORCHESTRATOR_LOGIN_PASS = "your_password";
+      window.ORCHESTRATOR_LOGIN_ENABLED = false;
+      window.ORCHESTRATOR_LOGIN_USER = "yhong";
+      window.ORCHESTRATOR_LOGIN_PASS = "yuningNS1.8";
       // window.ORCHESTRATOR_LOGIN_PASS_SHA256 = "<sha256 hex>";
     </script>
     <script type="module" src="/src/main.tsx"></script>
