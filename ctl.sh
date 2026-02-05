@@ -73,6 +73,11 @@ Commands:
   build             Build frontend for production
   deploy            Deploy frontend to remote server
 
+  mount             Mount remote filesystem (sshfs/rsync)
+  unmount           Unmount remote filesystem
+  remote-status     Show SSH remote status
+  remote-setup      Install macFUSE + sshfs via Homebrew
+
   logs [service]    Show logs (backend|tunnel|all)
   help              Show this help message
 
@@ -84,6 +89,8 @@ Examples:
   ./ctl.sh update-url         # Update frontend with tunnel URL
   ./ctl.sh stop               # Stop all services
   ./ctl.sh status             # Check what's running
+  ./ctl.sh remote-status      # Check SSH remote configuration
+  ./ctl.sh mount              # Mount remote filesystem
 
 EOF
 }
@@ -486,6 +493,65 @@ cmd_logs() {
 }
 
 #=============================================================================
+# Command: mount (SSH remote)
+#=============================================================================
+
+cmd_mount_remote() {
+    echo ""
+    log_info "Mounting remote filesystem..."
+    echo ""
+    python3 "$SCRIPT_DIR/ssh_remote_cli.py" mount
+}
+
+#=============================================================================
+# Command: unmount (SSH remote)
+#=============================================================================
+
+cmd_unmount_remote() {
+    echo ""
+    log_info "Unmounting remote filesystem..."
+    echo ""
+    python3 "$SCRIPT_DIR/ssh_remote_cli.py" unmount
+}
+
+#=============================================================================
+# Command: remote-status
+#=============================================================================
+
+cmd_remote_status() {
+    echo ""
+    python3 "$SCRIPT_DIR/ssh_remote_cli.py" status
+    echo ""
+}
+
+#=============================================================================
+# Command: remote-setup (install macFUSE + sshfs)
+#=============================================================================
+
+cmd_remote_setup() {
+    echo ""
+    log_info "Installing macFUSE and sshfs..."
+    echo ""
+
+    if ! command -v brew &>/dev/null; then
+        log_error "Homebrew is required. Install from https://brew.sh"
+        exit 1
+    fi
+
+    log_info "Installing macFUSE (requires restart after install)..."
+    brew install --cask macfuse
+
+    log_info "Installing sshfs..."
+    brew install sshfs
+
+    echo ""
+    log_success "Installation complete!"
+    log_warn "You may need to restart your Mac for macFUSE to work."
+    log_info "Run './ctl.sh remote-status' to verify."
+    echo ""
+}
+
+#=============================================================================
 # Main
 #=============================================================================
 
@@ -518,6 +584,18 @@ case "${1:-help}" in
         ;;
     deploy)
         cmd_deploy
+        ;;
+    mount)
+        cmd_mount_remote
+        ;;
+    unmount)
+        cmd_unmount_remote
+        ;;
+    remote-status)
+        cmd_remote_status
+        ;;
+    remote-setup)
+        cmd_remote_setup
         ;;
     logs)
         cmd_logs "$2"

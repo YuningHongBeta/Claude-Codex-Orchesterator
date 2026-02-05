@@ -17,6 +17,7 @@ from urllib.parse import parse_qs, urlparse
 ROOT = Path(__file__).resolve().parent
 RUNS_DIR = ROOT / "runs"
 WEB_DIR = ROOT / "web"
+DIST_DIR = WEB_DIR / "dist"
 CONFIG_PATH = ROOT / "config.json"
 CORS_ORIGIN: str | None = None
 API_TOKEN: str | None = None
@@ -25,6 +26,25 @@ API_TOKEN: str | None = None
 DEFAULT_STALL_TIMEOUT_SEC = 120
 # Default stall-to-error timeout in seconds (stalled for this long = error)
 DEFAULT_STALL_ERROR_TIMEOUT_SEC = 600
+
+_MIME_MAP = {
+    ".html": "text/html; charset=utf-8",
+    ".js": "application/javascript; charset=utf-8",
+    ".css": "text/css; charset=utf-8",
+    ".json": "application/json; charset=utf-8",
+    ".svg": "image/svg+xml",
+    ".png": "image/png",
+    ".ico": "image/x-icon",
+    ".woff": "font/woff",
+    ".woff2": "font/woff2",
+    ".ttf": "font/ttf",
+    ".txt": "text/plain; charset=utf-8",
+}
+
+
+def guess_mime(path: Path) -> str:
+    return _MIME_MAP.get(path.suffix.lower(), "application/octet-stream")
+
 
 try:
     import yaml
@@ -801,18 +821,7 @@ class OrchestratorHandler(BaseHTTPRequestHandler):
 
     def do_GET(self) -> None:
         parsed = urlparse(self.path)
-        if parsed.path == "/":
-            self.serve_static(WEB_DIR / "index.html", "text/html; charset=utf-8")
-            return
-        if parsed.path == "/app.js":
-            self.serve_static(WEB_DIR / "app.js", "application/javascript; charset=utf-8")
-            return
-        if parsed.path == "/styles.css":
-            self.serve_static(WEB_DIR / "styles.css", "text/css; charset=utf-8")
-            return
-        if parsed.path == "/config.js":
-            self.serve_static(WEB_DIR / "config.js", "application/javascript; charset=utf-8")
-            return
+        # --- API routes ---
         if parsed.path == "/api/config":
             self.send_json(read_config())
             return
@@ -854,6 +863,35 @@ class OrchestratorHandler(BaseHTTPRequestHandler):
                 self.send_logs_list(job_id)
                 return
             self.send_job(job_id, parsed)
+            return
+
+        # --- Static file serving from dist/ (or legacy web/) ---
+        self._serve_static_or_spa(parsed.path)
+
+    def _serve_static_or_spa(self, url_path: str) -> None:
+        """Serve static files from dist/ with SPA fallback."""
+        # Determine which directory to serve from
+        serve_dir = DIST_DIR if DIST_DIR.is_dir() else WEB_DIR
+
+        # Strip leading slash and resolve requested file
+        rel = url_path.lstrip("/")
+        if not rel:
+            rel = "index.html"
+        requested = (serve_dir / rel).resolve()
+
+        # Path traversal prevention
+        if not str(requested).startswith(str(serve_dir.resolve())):
+            self.send_error(HTTPStatus.FORBIDDEN, "Forbidden")
+            return
+
+        if requested.is_file():
+            self.serve_static(requested, guess_mime(requested))
+            return
+
+        # SPA fallback: serve index.html for non-file, non-API paths
+        index = serve_dir / "index.html"
+        if index.is_file():
+            self.serve_static(index, "text/html; charset=utf-8")
             return
 
         self.send_error(HTTPStatus.NOT_FOUND, "Not Found")

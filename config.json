@@ -54,5 +54,22 @@
     "warning_threshold": 0.75,
     "compact_threshold": 0.85,
     "max_compact_attempts": 3
+  },
+  "ssh_remote": {
+    "enabled": false,
+    "host": "",
+    "user": "",
+    "port": 22,
+    "key_file": "~/.ssh/id_ed25519",
+    "remote_path": "",
+    "local_mount": "~/mnt/remote_project",
+    "mount_options": ["reconnect", "ServerAliveInterval=15", "ServerAliveCountMax=3"],
+    "fallback_mode": "rsync",
+    "auto_add_dirs": true,
+    "rsync_options": {
+      "sync_before": true,
+      "sync_after": true,
+      "exclude": [".git", "node_modules", "__pycache__"]
+    }
   }
 }

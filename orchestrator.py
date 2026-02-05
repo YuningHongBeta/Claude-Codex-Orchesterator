@@ -28,6 +28,12 @@ except Exception:
     FileSystemEventHandler = None
     Observer = None
 
+try:
+    from ssh_remote import setup_remote, teardown_remote
+except Exception:
+    setup_remote = None
+    teardown_remote = None
+
 
 _BULLET_RE = re.compile(r"^\s*(?:[-*•・]|(?:\d+)[\)\.\:]?|\(\d+\))\s+")
 
@@ -1298,6 +1304,29 @@ def run(
     base_dir = config_path.parent
     run_dir = ensure_run_dir(base_dir, run_dir)
 
+    # Set up SSH remote filesystem if configured
+    _ssh_remote_active = False
+    if setup_remote is not None:
+        ssh_ok, ssh_msg, ssh_local_path = setup_remote(config)
+        if ssh_ok and ssh_local_path:
+            _ssh_remote_active = True
+            if verbose:
+                print(f"[SSHRemote] {ssh_msg}", file=sys.stderr)
+            # Inject mount path into permissions.*.add_dirs if auto_add_dirs is set
+            ssh_cfg = config.get("ssh_remote") or {}
+            if ssh_cfg.get("auto_add_dirs", True):
+                permissions = config.get("permissions") or {}
+                for cli_name in ("claude", "codex"):
+                    cli_perms = permissions.get(cli_name) or {}
+                    add_dirs = list(cli_perms.get("add_dirs") or [])
+                    if ssh_local_path not in add_dirs:
+                        add_dirs.append(ssh_local_path)
+                        cli_perms["add_dirs"] = add_dirs
+                    permissions[cli_name] = cli_perms
+                config["permissions"] = permissions
+        elif not ssh_ok and config.get("ssh_remote", {}).get("enabled"):
+            print(f"[SSHRemote] 警告: {ssh_msg}", file=sys.stderr)
+
     write_status(
         run_dir,
         {
@@ -1455,6 +1484,34 @@ def run(
         if performer_cfg.get("cmd"):
             performer_cfg = dict(performer_cfg)
             performer_cfg["cmd"] = apply_permission_flags(performer_cfg["cmd"], permissions)
+
+        # SSH Remote Execution Mode: override performer and concertmaster config
+        ssh_exec_cfg = config.get("ssh_remote") or {}
+        if ssh_exec_cfg.get("enabled"):
+            ssh_executor_path = str(base_dir / "ssh_executor.py")
+            agent_ssh_path = str(base_dir / "AGENT_SSH.md")
+
+            # Override performer command to use ssh_executor.py
+            performer_cfg = dict(performer_cfg)
+            performer_cfg["cmd"] = [sys.executable, ssh_executor_path]
+
+            # Override concertmaster system prompt to AGENT_SSH.md
+            if concertmaster_cfg.get("cmd"):
+                concertmaster_cfg = dict(concertmaster_cfg)
+                new_cmd = []
+                for part in concertmaster_cfg["cmd"]:
+                    if part == "AGENT.md":
+                        new_cmd.append(agent_ssh_path)
+                    else:
+                        new_cmd.append(part)
+                concertmaster_cfg["cmd"] = new_cmd
+
+            if verbose:
+                print(
+                    f"[SSHRemote] Performer mode: ssh_executor "
+                    f"(host={ssh_exec_cfg.get('host', '?')})",
+                    file=sys.stderr,
+                )
 
         write_status(
             run_dir,
@@ -1733,6 +1790,15 @@ def run(
         )
         print(f"エラー: {exc}", file=sys.stderr)
         return 1
+    finally:
+        # Tear down SSH remote filesystem
+        if _ssh_remote_active and teardown_remote is not None:
+            try:
+                td_ok, td_msg = teardown_remote(config)
+                if verbose:
+                    print(f"[SSHRemote] teardown: {td_msg}", file=sys.stderr)
+            except Exception as td_exc:
+                print(f"[SSHRemote] teardown error: {td_exc}", file=sys.stderr)
 
 
 def parse_args(argv: list[str]) -> argparse.Namespace:

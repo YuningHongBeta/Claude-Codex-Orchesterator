@@ -137,6 +137,143 @@ pip install pyyaml watchdog
 `codex exec` は引数が無い場合に標準入力を読むため、`{prompt}` を省略しています。
 `claude` は `-p` を付けて非対話で実行します。
 
+---
+
+## SSH リモート実行モード
+
+データや解析ソフト（Python, ROOT, bash）がリモートサーバーにあり、ローカルにコピーできない場合に使います。
+オーケストレーターはローカルで計画を立て、**実際のコマンドだけをSSH経由でリモートサーバー上で実行**します。
+
+```
+ローカル Mac                            リモートサーバー (例: cw01)
+┌──────────────────────────┐          ┌─────────────────────────┐
+│ Rewriter (Claude)        │          │                         │
+│   ↓ タスク分解           │          │  Python, ROOT, bash     │
+│ Concertmaster (Claude)   │   SSH    │  大容量実験データ       │
+│   ↓ シェルコマンド出力   │ ──────→  │  スクリプト実行         │
+│ ssh_executor.py          │ ←──────  │  stdout/stderr 返却     │
+│   ↓ 結果収集             │          │                         │
+│ Mix (Claude)             │          └─────────────────────────┘
+│   ↓ 結果統合             │
+└──────────────────────────┘
+```
+
+### セットアップ
+
+#### 1. SSH接続の確認
+
+パスワードなしでリモートサーバーにSSH接続できることを確認してください。
+
+```bash
+# 公開鍵認証が設定済みであること
+ssh user@remote-host "echo ok"
+```
+
+#### 2. config.json の設定
+
+`ssh_remote` セクションを編集します。
+
+```json
+{
+  "ssh_remote": {
+    "enabled": true,
+    "host": "cw01",
+    "user": "username",
+    "port": 22,
+    "key_file": "~/.ssh/id_ed25519",
+    "remote_path": "/home/username/analysis"
+  }
+}
+```
+
+| キー | 説明 |
+|------|------|
+| `enabled` | `true` にするとSSHリモート実行モードが有効になる |
+| `host` | リモートサーバーのホスト名（`~/.ssh/config` のホスト名でもOK） |
+| `user` | SSHユーザー名（空欄ならSSH設定に従う） |
+| `port` | SSHポート番号（デフォルト: 22） |
+| `key_file` | 秘密鍵のパス（デフォルト: `~/.ssh/id_ed25519`） |
+| `remote_path` | リモート上の作業ディレクトリ（コマンド実行時の `cd` 先） |
+
+#### 3. 動作確認
+
+```bash
+# SSHリモートモードで起動（--verbose で接続確認ログが出る）
+python3 orchestrator.py --verbose \
+  --task "/home/user/data 以下の .root ファイル一覧を表示して"
+```
+
+ログに `[SSHRemote] Performer mode: ssh_executor` と表示されれば有効です。
+
+Web UI から使う場合も同じです。`config.json` を編集するだけで、バックエンド再起動後に自動的にSSHモードに切り替わります。
+
+```bash
+# バックエンド再起動
+./ctl.sh stop && ./ctl.sh start
+```
+
+### 仕組み
+
+SSHリモートモードが有効な場合、オーケストレーターは自動的に以下の切り替えを行います：
+
+1. **コンサートマスター**のシステムプロンプトが `AGENT.md` → `AGENT_SSH.md` に変わる
+   - コンサートマスターは「演奏者がリモートのシェルコマンドしか実行できない」ことを知っている
+   - 指示にはコードブロック（`` ```bash `` / `` ```python ``）で実行可能なコマンドを含める
+2. **演奏者**のコマンドが `codex exec` → `ssh_executor.py` に変わる
+   - コンサートマスターの指示からコードブロックを抽出
+   - SSH経由でリモートサーバー上で実行
+   - stdout/stderr を返却
+
+リモートサーバーにソフトウェアのインストールは不要です。SSH接続さえできれば動作します。
+
+### ssh_executor.py の単体テスト
+
+```bash
+# bash コマンドの実行テスト
+echo '```bash
+ls -la /home/user/data/
+```' | python3 ssh_executor.py
+
+# Python スクリプトの実行テスト
+echo '```python
+import os
+print(os.listdir("/home/user/data/"))
+```' | python3 ssh_executor.py
+```
+
+### 対応言語
+
+| コードブロック | 実行方法 |
+|----------------|----------|
+| `` ```bash `` / `` ```sh `` | `ssh host 'cd remote_path && コマンド'` |
+| `` ```python `` / `` ```python3 `` | 短いスクリプト: `ssh host 'python3 -c "..."'`、長いスクリプト: SCP転送 → 実行 |
+
+コードブロックが見つからない場合は、`$` で始まる行や既知のコマンド（`ls`, `find`, `python3` など）を自動検出して実行します。
+
+### 構成ファイル
+
+| ファイル | 説明 |
+|----------|------|
+| `ssh_executor.py` | SSH経由のコマンド実行エンジン（`codex exec` の代替） |
+| `AGENT_SSH.md` | SSHモード用コンサートマスターのシステムプロンプト |
+| `ssh_remote.py` | sshfs/rsyncによるリモートファイルシステムマウント（別機能） |
+
+### トラブルシューティング
+
+**`Permission denied` エラー**
+→ SSH鍵認証を確認してください。`ssh -i ~/.ssh/id_ed25519 user@host "echo ok"` が通ること。
+
+**`Command timed out` エラー**
+→ `config.json` の `performer.timeout_sec` を増やしてください（デフォルト: 600秒）。
+
+**コンサートマスターが曖昧な指示を出す**
+→ `AGENT_SSH.md` が正しく読み込まれているか確認（`--verbose` でログ確認）。
+
+**リモートで `python3` や `root` コマンドが見つからない**
+→ コンサートマスターへの指示に `source /opt/root/bin/thisroot.sh` などの環境設定コマンドを含めてください。
+
+---
+
 ## 実行結果
 
 実行ごとに `runs/` 以下へ保存します。
@@ -187,6 +324,12 @@ Web UI からも返信できます（「指揮者 / コンマス」セクショ�
 - `ctl.sh` 統合管理スクリプト（後述）
 - `orchestrator.py` CLI本体
 - `web_server.py` API + ジョブ実行サーバ
+- `ssh_executor.py` SSHリモート実行エンジン
+- `ssh_remote.py` sshfs/rsyncリモートマウント
+- `ssh_remote_cli.py` SSHリモート操作CLI
+- `AGENT.md` コンサートマスター/演奏者のシステムプロンプト
+- `AGENT_SSH.md` SSHリモートモード用システムプロンプト
+- `CLAUDE.md` 指揮者（Rewriter/Mix）のシステムプロンプト
 - `web/` React + Vite フロントエンド
 - `runs/` 実行ログ/結果
 - `logs/` サービスログ・トンネルURL
