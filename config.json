@@ -15,6 +15,9 @@
       "sandbox": "danger-full-access",
       "approval": "never",
       "add_dirs": []
+    },
+    "gemini": {
+      "add_dirs": []
     }
   },
   "rewriter": {
@@ -41,11 +44,19 @@
   },
   "performer": {
     "cmd": [
+      "gemini",
+      "-p"
+    ],
+    "timeout_sec": 600
+  },
+  "advisor": {
+    "cmd": [
       "codex",
       "exec",
       "--skip-git-repo-check"
     ],
-    "timeout_sec": 600
+    "timeout_sec": 300,
+    "enabled": false
   },
   "max_turns_performer": 3,
   "mix_with_conductor": true,

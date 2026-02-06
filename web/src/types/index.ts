@@ -2,6 +2,8 @@ export type JobStage =
   | 'initialized'
   | 'rewriter'
   | 'rewriter_done'
+  | 'advisor'
+  | 'advisor_done'
   | 'conductor'
   | 'conductor_done'
   | 'performer'
@@ -129,6 +131,7 @@ export interface CliTokenStatus {
 export interface TokenStatusResponse {
   claude: CliTokenStatus;
   codex: CliTokenStatus;
+  gemini?: CliTokenStatus;
 }
 
 export interface ClaudePermissions {
@@ -147,6 +150,10 @@ export interface Permissions {
   codex?: CodexPermissions;
 }
 
+export interface AdvisorConfig extends CommandConfig {
+  enabled?: boolean;
+}
+
 export interface OrchestratorConfig {
   language?: string;
   instrument_pool?: string[];
@@ -154,6 +161,7 @@ export interface OrchestratorConfig {
   rewriter?: CommandConfig;
   concertmaster?: CommandConfig;
   performer?: CommandConfig;
+  advisor?: AdvisorConfig;
   max_turns_performer?: number;
   mix_with_conductor?: boolean;
   token_management?: TokenManagement;

@@ -2,11 +2,12 @@ import { useState } from 'react';
 import { Send, Loader2, CheckCircle, AlertCircle } from 'lucide-react';
 
 interface SubmitFormProps {
-  onSubmit: (task: string) => Promise<{ id: string }>;
+  onSubmit: (task: string, expertReview?: boolean) => Promise<{ id: string }>;
 }
 
 export function SubmitForm({ onSubmit }: SubmitFormProps) {
   const [task, setTask] = useState('');
+  const [expertReview, setExpertReview] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [success, setSuccess] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -20,7 +21,7 @@ export function SubmitForm({ onSubmit }: SubmitFormProps) {
     setSuccess(null);
 
     try {
-      const result = await onSubmit(task.trim());
+      const result = await onSubmit(task.trim(), expertReview);
       setSuccess(`ジョブを作成しました (ID: ${result.id})`);
       setTask('');
     } catch (err) {
@@ -48,6 +49,29 @@ export function SubmitForm({ onSubmit }: SubmitFormProps) {
         <p className="mt-2 text-xs text-slate-500">
           タスクは自然言語で記述できます。具体的に書くほど良い結果が得られます。
         </p>
+      </div>
+
+      {/* Expert review toggle */}
+      <div className="glass-light rounded-2xl p-4">
+        <label className="flex items-center justify-between cursor-pointer">
+          <div>
+            <span className="text-sm font-medium text-slate-300">エキスパートレビュー</span>
+            <p className="text-xs text-slate-500 mt-0.5">
+              Codexアドバイザーにタスク分解を確認させる
+            </p>
+          </div>
+          <div className="relative">
+            <input
+              type="checkbox"
+              checked={expertReview}
+              onChange={(e) => setExpertReview(e.target.checked)}
+              disabled={submitting}
+              className="sr-only peer"
+            />
+            <div className="w-11 h-6 bg-slate-700 rounded-full peer peer-checked:bg-violet-500 transition-colors" />
+            <div className="absolute left-0.5 top-0.5 w-5 h-5 bg-white rounded-full shadow-sm peer-checked:translate-x-5 transition-transform" />
+          </div>
+        </label>
       </div>
 
       {/* Success message */}

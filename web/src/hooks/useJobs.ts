@@ -154,11 +154,11 @@ export function useCreateJob() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const submit = useCallback(async (task: string): Promise<Job | null> => {
+  const submit = useCallback(async (task: string, expertReview?: boolean): Promise<Job | null> => {
     setLoading(true);
     setError(null);
     try {
-      const job = await createJob(task);
+      const job = await createJob(task, expertReview);
       return job;
     } catch (err) {
       setError('ジョブの投入に失敗しました');

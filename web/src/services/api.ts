@@ -50,11 +50,15 @@ export async function fetchJob(id: string, includeOutput = false): Promise<Job> 
   return apiFetch<Job>(`/api/jobs/${id}${query}`);
 }
 
-export async function createJob(task: string): Promise<Job> {
+export async function createJob(task: string, expertReview?: boolean): Promise<Job> {
+  const payload: Record<string, unknown> = { task };
+  if (expertReview !== undefined) {
+    payload.expert_review = expertReview;
+  }
   return apiFetch<Job>('/api/jobs', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ task }),
+    body: JSON.stringify(payload),
   });
 }
 

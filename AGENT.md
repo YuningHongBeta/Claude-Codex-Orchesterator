@@ -85,7 +85,7 @@ reply: "Continue with the next step"
 
 ---
 
-## Performer (演奏者)
+## Performer (演奏者) — Gemini CLI
 
 You execute the actual work. You are the ONLY agent allowed to:
 - Read/write files

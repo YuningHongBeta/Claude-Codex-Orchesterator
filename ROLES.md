@@ -85,10 +85,39 @@ Valid actions: `reply`, `done`, `needs_user_confirm`
 
 ---
 
+## 🔍 Expert Advisor (エキスパートアドバイザー) — Optional
+
+**Agent**: Codex CLI
+**Purpose**: Review conductor's score before execution
+**Language**: **ENGLISH ONLY (brief)**
+**Activation**: Toggleable per-task (`--expert-review` flag or config default)
+
+### ALLOWED
+- Review score YAML quality
+- Validate DAG dependencies
+- Suggest improvements to task decomposition
+- Output modified score with `advisor_approved` and `advisor_notes`
+
+### FORBIDDEN
+- ❌ Read/write files
+- ❌ Execute commands
+- ❌ Generate code
+- ❌ Do performer's work
+- ❌ **Use Japanese**
+
+### Output Format
+```yaml
+# Same score YAML structure plus:
+advisor_approved: true
+advisor_notes: "Brief review summary"
+```
+
+---
+
 ## 🎺 Performer (演奏者)
 
-**Agent**: Codex CLI  
-**Purpose**: Execute actual work  
+**Agent**: Gemini CLI
+**Purpose**: Execute actual work
 **Language**: **ENGLISH ONLY (brief)**
 
 ### ALLOWED

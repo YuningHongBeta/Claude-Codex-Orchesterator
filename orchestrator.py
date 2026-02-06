@@ -175,8 +175,8 @@ def parse_usage_from_json_lines(output: str) -> tuple[int, int]:
 
 def detect_cli_type(cmd_base: list[str]) -> str:
     """
-    Detect whether the command is for Claude or Codex CLI.
-    Returns 'claude', 'codex', or 'unknown'.
+    Detect whether the command is for Claude, Codex, or Gemini CLI.
+    Returns 'claude', 'codex', 'gemini', or 'unknown'.
     """
     if not cmd_base:
         return "unknown"
@@ -185,6 +185,8 @@ def detect_cli_type(cmd_base: list[str]) -> str:
         return "claude"
     if "codex" in cmd_str:
         return "codex"
+    if "gemini" in cmd_str:
+        return "gemini"
     return "unknown"
 
 
@@ -194,6 +196,9 @@ def call_compact_command(cmd_base: list[str], run_dir: Path, verbose: bool = Fal
     Returns True if successful.
     """
     cli_type = detect_cli_type(cmd_base)
+
+    if cli_type == "gemini":
+        return False
 
     if cli_type == "claude":
         try:
@@ -259,6 +264,9 @@ def call_status_command(cmd_base: list[str], verbose: bool = False) -> str:
     Returns status output or empty string if failed.
     """
     cli_type = detect_cli_type(cmd_base)
+
+    if cli_type == "gemini":
+        return ""
 
     if cli_type == "claude":
         try:
@@ -746,6 +754,10 @@ def apply_permission_flags(cmd: list[str], permissions: dict, cli_type: str | No
             result.insert(insert_idx, d)
             insert_idx += 1
 
+    elif cli_type == "gemini":
+        # Gemini CLI has minimal permission flags — no sandbox or approval modes
+        pass
+
     return result
 
 
@@ -902,6 +914,92 @@ def mix_prompt(score: dict, performances: list[dict]) -> str:
         parts.append(f"[{perf['instrument']}] {out}")
     joined = "\n".join(parts)
     return f"統合して日本語で出力:\n{joined}"
+
+
+def advisor_prompt(score_yaml: str) -> str:
+    """Build prompt for Codex advisor to review score YAML."""
+    return (
+        "You are an Expert Advisor. Review the following score YAML.\n"
+        "Validate DAG dependencies, task clarity, and coverage.\n"
+        "Output the same YAML structure with advisor_approved and advisor_notes fields added.\n"
+        "If the score is good, return it unchanged with advisor_approved: true.\n"
+        "Only fix real issues. Keep changes minimal.\n\n"
+        f"Score YAML:\n{score_yaml}"
+    )
+
+
+def run_advisor(
+    score: dict,
+    advisor_cfg: dict,
+    permissions: dict,
+    run_dir: Path,
+    verbose: bool,
+    dry_run: bool,
+    token_tracker: TokenUsage | None = None,
+) -> dict:
+    """Run Codex advisor to review the score. Returns (possibly modified) score.
+
+    On any failure, returns the original score unchanged.
+    """
+    ensure_yaml_available()
+    score_yaml_str = yaml.safe_dump(score, allow_unicode=True, sort_keys=False)
+
+    advisor_cmd = list(advisor_cfg.get("cmd", []))
+    if not advisor_cmd:
+        if verbose:
+            print("[Advisor] コマンドが未設定のためスキップ", file=sys.stderr)
+        return score
+
+    advisor_cmd = apply_permission_flags(advisor_cmd, permissions)
+
+    try:
+        result = run_external(
+            advisor_cmd,
+            advisor_prompt(score_yaml_str),
+            run_dir,
+            "advisor",
+            advisor_cfg.get("timeout_sec", 300),
+            dry_run,
+            token_tracker=token_tracker,
+        )
+    except Exception as exc:
+        if verbose:
+            print(f"[Advisor] 実行エラー: {exc}", file=sys.stderr)
+        return score
+
+    if result["returncode"] != 0:
+        if verbose:
+            print(f"[Advisor] 非ゼロ終了コード: {result['returncode']}", file=sys.stderr)
+        return score
+
+    stdout = (result.get("stdout") or "").strip()
+    if not stdout:
+        if verbose:
+            print("[Advisor] 空の出力", file=sys.stderr)
+        return score
+
+    try:
+        advised_score = extract_yaml(stdout)
+    except Exception as exc:
+        if verbose:
+            print(f"[Advisor] YAML解析エラー: {exc}", file=sys.stderr)
+        return score
+
+    # Validate that advised score has dag or bag
+    if not isinstance(advised_score.get("dag"), list) and not isinstance(advised_score.get("bag"), list):
+        if verbose:
+            print("[Advisor] dag/bag が見つかりません。元のスコアを使用します。", file=sys.stderr)
+        return score
+
+    # Save advisor output
+    write_yaml(run_dir / "score_advised.yaml", advised_score)
+
+    if verbose:
+        approved = advised_score.get("advisor_approved", "N/A")
+        notes = advised_score.get("advisor_notes", "")
+        print(f"[Advisor] approved={approved}, notes={notes}", file=sys.stderr)
+
+    return advised_score
 
 
 def local_mix(score: dict, performances: list[dict]) -> str:
@@ -1299,6 +1397,7 @@ def run(
     dry_run: bool,
     verbose: bool,
     run_dir: Path | None,
+    expert_review: bool | None = None,
 ) -> int:
     config = load_config(config_path)
     base_dir = config_path.parent
@@ -1542,6 +1641,37 @@ def run(
                     print(f"警告: 指揮者YAMLの解析に失敗: {exc}", file=sys.stderr)
         if not score:
             score = fallback_score(task, instrument_pool)
+
+        # Determine whether to run expert advisor
+        advisor_cfg = config.get("advisor") or {}
+        use_advisor = expert_review if expert_review is not None else bool(advisor_cfg.get("enabled", False))
+
+        if use_advisor:
+            write_status(
+                run_dir,
+                {
+                    "stage": "advisor",
+                    "progress": 0.08,
+                    "task": task,
+                },
+            )
+            score = run_advisor(
+                score,
+                advisor_cfg,
+                permissions,
+                run_dir,
+                verbose,
+                dry_run,
+                token_tracker=token_tracker,
+            )
+            write_status(
+                run_dir,
+                {
+                    "stage": "advisor_done",
+                    "progress": 0.12,
+                    "task": task,
+                },
+            )
 
         raw_score = score
         score = normalize_score(raw_score, task, instrument_pool)
@@ -1828,6 +1958,20 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
         "--run-dir",
         help="実行結果の出力先ディレクトリ（未指定なら自動生成）",
     )
+    review_group = parser.add_mutually_exclusive_group()
+    review_group.add_argument(
+        "--expert-review",
+        action="store_true",
+        default=None,
+        dest="expert_review",
+        help="Codexアドバイザーによるスコアレビューを有効にする",
+    )
+    review_group.add_argument(
+        "--no-expert-review",
+        action="store_false",
+        dest="expert_review",
+        help="Codexアドバイザーによるスコアレビューを無効にする",
+    )
     return parser.parse_args(argv)
 
 
@@ -1844,7 +1988,7 @@ def main(argv: list[str]) -> int:
         print(f"エラー: 設定ファイルが見つかりません: {config_path}", file=sys.stderr)
         return 2
     run_dir = Path(args.run_dir).expanduser().resolve() if args.run_dir else None
-    return run(task, config_path, args.dry_run, args.verbose, run_dir)
+    return run(task, config_path, args.dry_run, args.verbose, run_dir, args.expert_review)
 
 
 if __name__ == "__main__":

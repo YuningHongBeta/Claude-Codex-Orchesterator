@@ -338,6 +338,32 @@ def get_cli_token_status() -> dict:
     except Exception as e:
         result["codex"]["error"] = str(e)
 
+    # Check Gemini CLI availability
+    result["gemini"] = {
+        "available": False,
+        "raw_output": "",
+        "error": None,
+    }
+    try:
+        proc = subprocess.run(
+            ["gemini", "--version"],
+            text=True,
+            capture_output=True,
+            timeout=10,
+            env=os.environ.copy(),
+        )
+        if proc.returncode == 0:
+            result["gemini"]["available"] = True
+            result["gemini"]["raw_output"] = proc.stdout.strip() if proc.stdout else "利用可能"
+        else:
+            result["gemini"]["error"] = proc.stderr.strip() if proc.stderr else "gemini コマンドが見つかりません"
+    except FileNotFoundError:
+        result["gemini"]["error"] = "gemini コマンドが見つかりません"
+    except subprocess.TimeoutExpired:
+        result["gemini"]["error"] = "タイムアウト"
+    except Exception as e:
+        result["gemini"]["error"] = str(e)
+
     return result
 
 
@@ -653,6 +679,7 @@ def read_log_file(run_dir: Path, filename: str) -> str | None:
     allowed_patterns = [
         "conductor_stdout.txt", "conductor_stderr.txt", "conductor_prompt.txt",
         "rewriter_stdout.txt", "rewriter_stderr.txt", "rewriter_prompt.txt",
+        "advisor_stdout.txt", "advisor_stderr.txt", "advisor_prompt.txt",
         "mix_stdout.txt", "mix_stderr.txt", "mix_prompt.txt",
     ]
     if filename in allowed_patterns:
@@ -702,7 +729,7 @@ def list_runs() -> list[dict]:
     return summaries
 
 
-def start_job(task: str, config_path: Path | None) -> dict:
+def start_job(task: str, config_path: Path | None, expert_review: bool | None = None) -> dict:
     RUNS_DIR.mkdir(parents=True, exist_ok=True)
     run_id = f"{dt.datetime.now().strftime('%Y%m%d_%H%M%S')}_{uuid.uuid4().hex[:6]}"
     run_dir = RUNS_DIR / run_id
@@ -720,6 +747,10 @@ def start_job(task: str, config_path: Path | None) -> dict:
         "--run-dir",
         str(run_dir),
     ]
+    if expert_review is True:
+        cmd.append("--expert-review")
+    elif expert_review is False:
+        cmd.append("--no-expert-review")
     proc = subprocess.Popen(
         cmd,
         cwd=str(ROOT),
@@ -930,8 +961,10 @@ class OrchestratorHandler(BaseHTTPRequestHandler):
             return
         cfg = payload.get("config")
         config_path = Path(cfg).expanduser().resolve() if cfg else None
+        expert_review_raw = payload.get("expert_review")
+        expert_review = bool(expert_review_raw) if expert_review_raw is not None else None
         try:
-            job = start_job(task, config_path)
+            job = start_job(task, config_path, expert_review=expert_review)
             self.send_json(job, status=HTTPStatus.CREATED)
         except FileNotFoundError as exc:
             self.send_error(HTTPStatus.BAD_REQUEST, str(exc))

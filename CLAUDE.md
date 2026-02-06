@@ -76,6 +76,14 @@ When integrating performer outputs:
 
 ---
 
+## Expert Advisor (Optional)
+
+Your score output may be reviewed by a Codex-based Expert Advisor before execution.
+The advisor may refine task descriptions, fix dependencies, or add notes.
+This does not change your output format — always output the same YAML.
+
+---
+
 ## Output Rules
 
 - YAML only, no code fences in output

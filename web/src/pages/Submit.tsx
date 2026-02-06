@@ -8,8 +8,8 @@ export function Submit() {
   const navigate = useNavigate();
   const { submit } = useCreateJob();
 
-  const handleSubmit = async (task: string) => {
-    const result = await submit(task);
+  const handleSubmit = async (task: string, expertReview?: boolean) => {
+    const result = await submit(task, expertReview);
     if (result) {
       // Navigate to job detail after short delay
       setTimeout(() => {
