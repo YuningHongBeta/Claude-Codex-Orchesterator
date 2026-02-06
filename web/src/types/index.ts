@@ -6,6 +6,8 @@ export type JobStage =
   | 'advisor_done'
   | 'conductor'
   | 'conductor_done'
+  | 'pre_review'
+  | 'post_review'
   | 'performer'
   | 'performer_done'
   | 'mix'

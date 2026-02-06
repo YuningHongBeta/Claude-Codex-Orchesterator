@@ -928,6 +928,54 @@ def advisor_prompt(score_yaml: str) -> str:
     )
 
 
+def reviewer_pre_prompt(refined_task: str, performer: dict, instruction: str) -> str:
+    """Build prompt for Codex reviewer to review commands BEFORE execution."""
+    return (
+        "You are reviewing SSH commands BEFORE execution.\n"
+        "Check for: destructive operations, path safety, command syntax, scope.\n\n"
+        f"Task: {refined_task}\n"
+        f"Performer: {performer.get('name', '')} — {performer.get('task', '')}\n\n"
+        f"Commands to review:\n{instruction}\n\n"
+        "Output ONLY YAML with verdict (approved/revise), reason, feedback."
+    )
+
+
+def reviewer_post_prompt(refined_task: str, performer: dict, instruction: str, output: str) -> str:
+    """Build prompt for Codex reviewer to review results AFTER execution."""
+    return (
+        "You are reviewing SSH execution results AFTER execution.\n"
+        "Check for: task completion, errors, output quality, unexpected results.\n\n"
+        f"Task: {refined_task}\n"
+        f"Performer: {performer.get('name', '')} — {performer.get('task', '')}\n\n"
+        f"Instruction given:\n{instruction}\n\n"
+        f"Execution output:\n{output}\n\n"
+        "Output ONLY YAML with verdict (approved/revise), reason, feedback."
+    )
+
+
+def parse_reviewer_output(text: str) -> dict:
+    """Parse reviewer YAML output. Returns dict with verdict, feedback, reason.
+
+    Defaults to 'revise' on parse failure (safe side).
+    """
+    try:
+        data = extract_yaml(text)
+        verdict = (data.get("verdict") or "").strip().lower()
+        if verdict not in ("approved", "revise"):
+            verdict = "revise"
+        return {
+            "verdict": verdict,
+            "feedback": data.get("feedback") or "",
+            "reason": data.get("reason") or "",
+        }
+    except Exception as exc:
+        return {
+            "verdict": "revise",
+            "feedback": f"Reviewer output parse error: {exc}",
+            "reason": "Failed to parse reviewer YAML output",
+        }
+
+
 def run_advisor(
     score: dict,
     advisor_cfg: dict,
@@ -1225,6 +1273,8 @@ def concertmaster_worker(
     max_turns: int,
     dry_run: bool,
     token_tracker: TokenUsage | None = None,
+    ssh_reviewer_active: bool = False,
+    ssh_reviewer_pre_enabled: bool = False,
 ) -> None:
     watcher = WatchHandle(exchange_path)
     turn = 0
@@ -1320,9 +1370,13 @@ def concertmaster_worker(
             if not reply:
                 reply = "続けてください。"
 
-            def apply_reply(d: dict) -> dict:
+            next_status = "waiting_for_performer"
+            if ssh_reviewer_active and ssh_reviewer_pre_enabled:
+                next_status = "waiting_for_pre_review"
+
+            def apply_reply(d: dict, _next=next_status) -> dict:
                 append_exchange_message(d, "concertmaster", reply, "prompt")
-                d["status"] = "waiting_for_performer"
+                d["status"] = _next
                 d["pending"] = {}
                 d["turn"] = d.get("turn", 0) + 1
                 return d
@@ -1345,6 +1399,8 @@ def performer_worker(
     max_turns: int,
     dry_run: bool,
     token_tracker: TokenUsage | None = None,
+    ssh_reviewer_active: bool = False,
+    ssh_reviewer_post_enabled: bool = False,
 ) -> None:
     watcher = WatchHandle(exchange_path)
     turn = 0
@@ -1372,12 +1428,135 @@ def performer_worker(
             output = result["stdout"].strip()
             turn += 1
 
-            def apply_output(d: dict) -> dict:
+            next_status = "waiting_for_concertmaster"
+            if ssh_reviewer_active and ssh_reviewer_post_enabled:
+                next_status = "waiting_for_post_review"
+
+            def apply_output(d: dict, _next=next_status) -> dict:
                 append_exchange_message(d, "performer", output, "response")
-                d["status"] = "waiting_for_concertmaster"
+                d["status"] = _next
                 return d
 
             update_exchange(exchange_path, lock, apply_output)
+    finally:
+        watcher.stop()
+
+
+def reviewer_worker(
+    exchange_path: Path,
+    performer: dict,
+    refined_task: str,
+    reviewer_cmd: list[str],
+    timeout_sec: int | None,
+    run_dir: Path,
+    label_prefix: str,
+    lock: threading.Lock,
+    stop_event: threading.Event,
+    max_review_rounds: int,
+    pre_enabled: bool,
+    post_enabled: bool,
+    dry_run: bool,
+    token_tracker: TokenUsage | None = None,
+) -> None:
+    """Reviewer worker that watches for pre/post review states."""
+    watcher = WatchHandle(exchange_path)
+    review_rounds: dict[int, int] = {}  # turn -> rounds used
+    try:
+        while not stop_event.is_set():
+            data = read_exchange(exchange_path)
+            status = data.get("status")
+            if status in ("done", "error"):
+                break
+
+            if status not in ("waiting_for_pre_review", "waiting_for_post_review"):
+                watcher.wait(1.5)
+                continue
+
+            current_turn = data.get("turn", 0)
+            rounds_used = review_rounds.get(current_turn, 0)
+
+            if rounds_used >= max_review_rounds:
+                # Max rounds exceeded — fall through
+                if status == "waiting_for_pre_review":
+                    fallthrough_status = "waiting_for_performer"
+                else:
+                    fallthrough_status = "waiting_for_concertmaster"
+
+                def apply_fallthrough(d: dict, _st=fallthrough_status) -> dict:
+                    append_exchange_message(
+                        d, "system",
+                        f"Reviewer max rounds ({max_review_rounds}) exceeded, proceeding.",
+                        "system",
+                    )
+                    d["status"] = _st
+                    return d
+
+                update_exchange(exchange_path, lock, apply_fallthrough)
+                continue
+
+            # Build reviewer prompt
+            is_pre = status == "waiting_for_pre_review"
+            last_instruction = get_last_message(data, "concertmaster") or ""
+
+            if is_pre:
+                prompt = reviewer_pre_prompt(refined_task, performer, last_instruction)
+                review_label = f"{label_prefix}_pre_{current_turn}_{rounds_used}"
+            else:
+                last_output = get_last_message(data, "performer") or ""
+                prompt = reviewer_post_prompt(refined_task, performer, last_instruction, last_output)
+                review_label = f"{label_prefix}_post_{current_turn}_{rounds_used}"
+
+            try:
+                result = run_external(
+                    reviewer_cmd,
+                    prompt,
+                    run_dir,
+                    review_label,
+                    timeout_sec,
+                    dry_run,
+                    token_tracker=token_tracker,
+                )
+                if result["returncode"] != 0:
+                    review_result = {
+                        "verdict": "revise",
+                        "feedback": f"Reviewer exited with code {result['returncode']}: {result['stderr'][:500]}",
+                        "reason": "Non-zero exit code from reviewer",
+                    }
+                else:
+                    review_result = parse_reviewer_output(result["stdout"])
+            except Exception as exc:
+                review_result = {
+                    "verdict": "revise",
+                    "feedback": f"Reviewer error: {exc}",
+                    "reason": "Reviewer execution failed",
+                }
+
+            review_rounds[current_turn] = rounds_used + 1
+            verdict = review_result["verdict"]
+            feedback = review_result.get("feedback", "")
+            reason = review_result.get("reason", "")
+            review_msg = f"[Reviewer {('pre' if is_pre else 'post')}-review] verdict={verdict}\nreason: {reason}\nfeedback: {feedback}"
+
+            if is_pre:
+                if verdict == "approved":
+                    def apply_pre_approved(d: dict) -> dict:
+                        append_exchange_message(d, "reviewer", review_msg, "review")
+                        d["status"] = "waiting_for_performer"
+                        return d
+                    update_exchange(exchange_path, lock, apply_pre_approved)
+                else:
+                    def apply_pre_revise(d: dict) -> dict:
+                        append_exchange_message(d, "reviewer", review_msg, "review")
+                        d["status"] = "waiting_for_concertmaster"
+                        return d
+                    update_exchange(exchange_path, lock, apply_pre_revise)
+            else:
+                # Post-review: both verdicts go back to concertmaster
+                def apply_post(d: dict) -> dict:
+                    append_exchange_message(d, "reviewer", review_msg, "review")
+                    d["status"] = "waiting_for_concertmaster"
+                    return d
+                update_exchange(exchange_path, lock, apply_post)
     finally:
         watcher.stop()
 
@@ -1612,6 +1791,28 @@ def run(
                     file=sys.stderr,
                 )
 
+        # SSH Reviewer configuration
+        ssh_reviewer_cfg = ssh_exec_cfg.get("reviewer") or {} if ssh_exec_cfg.get("enabled") else {}
+        ssh_reviewer_active = bool(ssh_reviewer_cfg.get("enabled"))
+        ssh_reviewer_pre_enabled = ssh_reviewer_active and bool(ssh_reviewer_cfg.get("review_pre_execution", True))
+        ssh_reviewer_post_enabled = ssh_reviewer_active and bool(ssh_reviewer_cfg.get("review_post_execution", True))
+        ssh_reviewer_cmd = list(ssh_reviewer_cfg.get("cmd") or [])
+        ssh_reviewer_timeout = ssh_reviewer_cfg.get("timeout_sec", 300)
+        ssh_reviewer_max_rounds = ssh_reviewer_cfg.get("max_review_rounds", 3)
+
+        if ssh_reviewer_active and ssh_reviewer_cmd:
+            ssh_reviewer_cmd = apply_permission_flags(ssh_reviewer_cmd, permissions)
+            if verbose:
+                print(
+                    f"[SSHRemote] Reviewer active: pre={ssh_reviewer_pre_enabled}, "
+                    f"post={ssh_reviewer_post_enabled}, max_rounds={ssh_reviewer_max_rounds}",
+                    file=sys.stderr,
+                )
+        else:
+            ssh_reviewer_active = False
+            ssh_reviewer_pre_enabled = False
+            ssh_reviewer_post_enabled = False
+
         write_status(
             run_dir,
             {
@@ -1733,43 +1934,72 @@ def run(
             cm_thread = threading.Thread(
                 target=concertmaster_worker,
                 name=f"concertmaster-{idx + 1}",
-                args=(
-                    exchange_path,
-                    inst,
-                    score.get("refined_task", task),
-                    score.get("global_notes", ""),
-                    concertmaster_cfg.get("cmd", []),
-                    concertmaster_cfg.get("timeout_sec"),
-                    run_dir,
-                    f"concertmaster_{idx + 1}",
-                    lock,
-                    stop_event,
-                    verbose,
-                    max_turns,
-                    dry_run,
-                    token_tracker,
+                kwargs=dict(
+                    exchange_path=exchange_path,
+                    performer=inst,
+                    refined_task=score.get("refined_task", task),
+                    global_notes=score.get("global_notes", ""),
+                    concertmaster_cmd=concertmaster_cfg.get("cmd", []),
+                    timeout_sec=concertmaster_cfg.get("timeout_sec"),
+                    run_dir=run_dir,
+                    label_prefix=f"concertmaster_{idx + 1}",
+                    lock=lock,
+                    stop_event=stop_event,
+                    verbose=verbose,
+                    max_turns=max_turns,
+                    dry_run=dry_run,
+                    token_tracker=token_tracker,
+                    ssh_reviewer_active=ssh_reviewer_active,
+                    ssh_reviewer_pre_enabled=ssh_reviewer_pre_enabled,
                 ),
             )
             perf_thread = threading.Thread(
                 target=performer_worker,
                 name=f"performer-{idx + 1}",
-                args=(
-                    exchange_path,
-                    inst,
-                    performer_cfg.get("cmd", []),
-                    performer_cfg.get("timeout_sec"),
-                    run_dir,
-                    f"performer_{idx + 1}",
-                    lock,
-                    stop_event,
-                    max_turns,
-                    dry_run,
-                    token_tracker,
+                kwargs=dict(
+                    exchange_path=exchange_path,
+                    performer=inst,
+                    performer_cmd=performer_cfg.get("cmd", []),
+                    timeout_sec=performer_cfg.get("timeout_sec"),
+                    run_dir=run_dir,
+                    label_prefix=f"performer_{idx + 1}",
+                    lock=lock,
+                    stop_event=stop_event,
+                    max_turns=max_turns,
+                    dry_run=dry_run,
+                    token_tracker=token_tracker,
+                    ssh_reviewer_active=ssh_reviewer_active,
+                    ssh_reviewer_post_enabled=ssh_reviewer_post_enabled,
                 ),
             )
-            threads.extend([cm_thread, perf_thread])
-            cm_thread.start()
-            perf_thread.start()
+            task_threads = [cm_thread, perf_thread]
+
+            if ssh_reviewer_active:
+                rev_thread = threading.Thread(
+                    target=reviewer_worker,
+                    name=f"reviewer-{idx + 1}",
+                    kwargs=dict(
+                        exchange_path=exchange_path,
+                        performer=inst,
+                        refined_task=score.get("refined_task", task),
+                        reviewer_cmd=ssh_reviewer_cmd,
+                        timeout_sec=ssh_reviewer_timeout,
+                        run_dir=run_dir,
+                        label_prefix=f"reviewer_{idx + 1}",
+                        lock=lock,
+                        stop_event=stop_event,
+                        max_review_rounds=ssh_reviewer_max_rounds,
+                        pre_enabled=ssh_reviewer_pre_enabled,
+                        post_enabled=ssh_reviewer_post_enabled,
+                        dry_run=dry_run,
+                        token_tracker=token_tracker,
+                    ),
+                )
+                task_threads.append(rev_thread)
+
+            threads.extend(task_threads)
+            for t in task_threads:
+                t.start()
             state["status"] = "running"
 
         # Monitor progress and schedule only ready tasks

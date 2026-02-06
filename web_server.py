@@ -709,6 +709,11 @@ def read_log_file(run_dir: Path, filename: str) -> str | None:
         if path.exists():
             return path.read_text(encoding="utf-8")
         return None
+    if re.match(r"^reviewer_\d+_(pre|post)_\d+_\d+_(stdout|stderr|prompt)\.txt$", filename):
+        path = run_dir / filename
+        if path.exists():
+            return path.read_text(encoding="utf-8")
+        return None
 
 
 def list_runs() -> list[dict]:
