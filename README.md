@@ -259,12 +259,57 @@ print(os.listdir("/home/user/data/"))
 
 コードブロックが見つからない場合は、`$` で始まる行や既知のコマンド（`ls`, `find`, `python3` など）を自動検出して実行します。
 
+### Codex レビューアーループ（オプション）
+
+SSHモードでは、Codex をレビューアーとして追加し、コマンドの**実行前チェック**（安全性・正確性）と**実行後チェック**（完了度・品質）を行うことができます。
+レビューアーが修正を要求した場合、コンサートマスターに差し戻して修正ループが回ります。
+
+```
+通常:    コンサートマスター → 演奏者 → コンサートマスター（ループ）
+
+レビュー付き: コンサートマスター → [実行前レビュー] → 演奏者 → [実行後レビュー] → コンサートマスター
+                                    ↑ 修正                      ↑ 修正
+                                    └── コンサートマスター ──────┘
+```
+
+#### 設定
+
+`config.json` の `ssh_remote.reviewer` セクションで有効化します：
+
+```json
+{
+  "ssh_remote": {
+    "enabled": true,
+    "reviewer": {
+      "enabled": true,
+      "cmd": ["codex", "exec", "--skip-git-repo-check"],
+      "timeout_sec": 300,
+      "max_review_rounds": 3,
+      "review_pre_execution": true,
+      "review_post_execution": true
+    }
+  }
+}
+```
+
+| キー | 説明 |
+|------|------|
+| `enabled` | `true` にするとレビューアーが有効になる |
+| `cmd` | レビューアーの実行コマンド（Codex CLI） |
+| `timeout_sec` | レビューのタイムアウト（デフォルト: 300秒） |
+| `max_review_rounds` | 1ターンあたりの最大レビュー回数（超過するとスキップ） |
+| `review_pre_execution` | 実行前レビューの有効/無効 |
+| `review_post_execution` | 実行後レビューの有効/無効 |
+
+レビューアーが無効（`enabled: false`）の場合、SSHモードは従来通り動作します。
+
 ### 構成ファイル
 
 | ファイル | 説明 |
 |----------|------|
 | `ssh_executor.py` | SSH経由のコマンド実行エンジン（`gemini -p` の代替） |
 | `AGENT_SSH.md` | SSHモード用コンサートマスターのシステムプロンプト |
+| `REVIEWER_SSH.md` | SSHモード用レビューアー（Codex）のシステムプロンプト |
 | `ssh_remote.py` | sshfs/rsyncによるリモートファイルシステムマウント（別機能） |
 
 ### トラブルシューティング
@@ -292,6 +337,8 @@ print(os.listdir("/home/user/data/"))
 - `score_raw.yaml` 指揮者の生出力（ある場合）
 - `score_advised.yaml` アドバイザーのレビュー結果（エキスパートレビュー有効時）
 - `performer_*_stdout.txt` 各演奏者の出力
+- `reviewer_*_pre_*_stdout.txt` レビューアーの実行前レビュー出力（有効時）
+- `reviewer_*_post_*_stdout.txt` レビューアーの実行後レビュー出力（有効時）
 - `final.txt` 統合結果
 - `status.json` 進捗ステータス
 - `exchanges/exchange_*.yaml` コンサートマスター/演奏者のやりとり
@@ -343,6 +390,7 @@ Web UI からも返信できます（「指揮者 / コンマス」セクショ�
 - `ssh_remote_cli.py` SSHリモート操作CLI
 - `AGENT.md` コンサートマスター/演奏者のシステムプロンプト
 - `AGENT_SSH.md` SSHリモートモード用システムプロンプト
+- `REVIEWER_SSH.md` SSHモード用レビューアー（Codex）のシステムプロンプト
 - `ADVISOR.md` エキスパートアドバイザー（Codex）のシステムプロンプト
 - `CLAUDE.md` 指揮者（Rewriter/Mix）のシステムプロンプト
 - `web/` React + Vite フロントエンド
