@@ -1,6 +1,7 @@
-# Claude Code × Codex オーケストレーター
+# Claude Code × Gemini オーケストレーター (v0.2.0)
 
-Claude Code を指揮者/コンサートマスター、Codex を演奏者として協調させるCLIです。
+Claude Code を指揮者/コンサートマスター、Gemini CLI を演奏者として協調させるCLIです。
+オプションで Codex をエキスパートアドバイザーとして使い、タスク分解の品質をレビューできます。
 出力は日本語を前提に設計しています。
 
 ---
@@ -16,7 +17,8 @@ Claude Code を指揮者/コンサートマスター、Codex を演奏者とし�
 | Python 3.8+ | https://www.python.org/ |
 | Node.js 18+ | https://nodejs.org/ |
 | Claude Code CLI | `npm install -g @anthropic-ai/claude-code` |
-| Codex CLI | `npm install -g @openai/codex` |
+| Gemini CLI | `npm install -g @anthropic-ai/gemini-cli` または https://github.com/google-gemini/gemini-cli |
+| Codex CLI (任意) | `npm install -g @openai/codex`（エキスパートアドバイザー用） |
 
 ### 2. リポジトリのクローンと依存関係のインストール
 
@@ -128,14 +130,21 @@ pip install pyyaml watchdog
     "cmd": ["claude", "-p", "{prompt}"]
   },
   "performer": {
-    "cmd": ["codex", "exec", "--skip-git-repo-check"]
+    "cmd": ["gemini", "-p"],
+    "timeout_sec": 600
+  },
+  "advisor": {
+    "cmd": ["codex", "exec", "--skip-git-repo-check"],
+    "timeout_sec": 300,
+    "enabled": false
   },
   "instrument_pool": ["ヴァイオリン", "ビオラ", "チェロ"]
 }
 ```
 
-`codex exec` は引数が無い場合に標準入力を読むため、`{prompt}` を省略しています。
+`gemini -p` はヘッドレスプロンプトモードで実行します。
 `claude` は `-p` を付けて非対話で実行します。
+`advisor` はオプションで、`enabled: true` にするとデフォルトで有効になります。
 
 ---
 
@@ -219,7 +228,7 @@ SSHリモートモードが有効な場合、オーケストレーターは自�
 1. **コンサートマスター**のシステムプロンプトが `AGENT.md` → `AGENT_SSH.md` に変わる
    - コンサートマスターは「演奏者がリモートのシェルコマンドしか実行できない」ことを知っている
    - 指示にはコードブロック（`` ```bash `` / `` ```python ``）で実行可能なコマンドを含める
-2. **演奏者**のコマンドが `codex exec` → `ssh_executor.py` に変わる
+2. **演奏者**のコマンドが `gemini -p` → `ssh_executor.py` に変わる
    - コンサートマスターの指示からコードブロックを抽出
    - SSH経由でリモートサーバー上で実行
    - stdout/stderr を返却
@@ -254,7 +263,7 @@ print(os.listdir("/home/user/data/"))
 
 | ファイル | 説明 |
 |----------|------|
-| `ssh_executor.py` | SSH経由のコマンド実行エンジン（`codex exec` の代替） |
+| `ssh_executor.py` | SSH経由のコマンド実行エンジン（`gemini -p` の代替） |
 | `AGENT_SSH.md` | SSHモード用コンサートマスターのシステムプロンプト |
 | `ssh_remote.py` | sshfs/rsyncによるリモートファイルシステムマウント（別機能） |
 
@@ -281,6 +290,7 @@ print(os.listdir("/home/user/data/"))
 - `score.json` 指揮者の分担スコア
 - `score.yaml` 指揮者の分担スコア（YAML）
 - `score_raw.yaml` 指揮者の生出力（ある場合）
+- `score_advised.yaml` アドバイザーのレビュー結果（エキスパートレビュー有効時）
 - `performer_*_stdout.txt` 各演奏者の出力
 - `final.txt` 統合結果
 - `status.json` 進捗ステータス
@@ -291,18 +301,22 @@ print(os.listdir("/home/user/data/"))
 - `--dry-run` 外部コマンドを実行せず、プロンプト生成のみ
 - `--config` 設定ファイルのパスを指定
 - `--run-dir` 出力先ディレクトリを指定
+- `--expert-review` Codexアドバイザーによるスコアレビューを有効にする
+- `--no-expert-review` Codexアドバイザーを無効にする（config.jsonのデフォルトを上書き）
 
 ## メモ
 
-- `claude` / `codex` コマンドは別途インストールが必要です。
+- `claude` / `gemini` コマンドは別途インストールが必要です。
+- `codex` コマンドはエキスパートアドバイザー機能を使う場合のみ必要です。
 - 出力形式や楽器名は `config.json` の `instrument_pool` で調整できます。
 - 演奏者の数は、分解されたタスク数に合わせて自動で最適化されます。
 
 ## YAML 交換フロー
 
 - 1) 指揮者（Claude Code）がタスクを言い直し+分配（`score.yaml`）
+- 1.5) [オプション] エキスパートアドバイザー（Codex）がスコアをレビュー（`score_advised.yaml`）
 - 2) コンサートマスター（Claude Code）が演奏者向けの指示を生成し、`exchange_*.yaml` に書く
-- 3) 演奏者（Codex）が `exchange_*.yaml` を監視して実行し、出力を書き戻す
+- 3) 演奏者（Gemini）が `exchange_*.yaml` を監視して実行し、出力を書き戻す
 - 2と3は相互に `exchange_*.yaml` を監視します
 
 ### 危険な操作の確認
@@ -329,6 +343,7 @@ Web UI からも返信できます（「指揮者 / コンマス」セクショ�
 - `ssh_remote_cli.py` SSHリモート操作CLI
 - `AGENT.md` コンサートマスター/演奏者のシステムプロンプト
 - `AGENT_SSH.md` SSHリモートモード用システムプロンプト
+- `ADVISOR.md` エキスパートアドバイザー（Codex）のシステムプロンプト
 - `CLAUDE.md` 指揮者（Rewriter/Mix）のシステムプロンプト
 - `web/` React + Vite フロントエンド
 - `runs/` 実行ログ/結果
